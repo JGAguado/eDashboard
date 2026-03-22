@@ -2,7 +2,6 @@ from __future__ import annotations
 
 DOMAIN = "edashboard"
 
-CONF_PROJECT_ROOT = "project_root"
 CONF_OUTPUT_DIR = "output_dir"
 CONF_REFRESH_SECONDS = "refresh_seconds"
 CONF_CITY_LABEL = "city_label"

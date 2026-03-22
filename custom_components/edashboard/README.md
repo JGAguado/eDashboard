@@ -6,7 +6,6 @@ This custom component runs the eDashboard rendering pipeline inside Home Assista
 
 ```yaml
 edashboard:
-  project_root: /config/eDashboard
   refresh_seconds: 300
   city_label: eDashboard
   timezone: Europe/Vienna

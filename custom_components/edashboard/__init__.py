@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from importlib import import_module
 from pathlib import Path
 import asyncio
 import logging
-import sys
 from typing import Any
 
 import voluptuous as vol
@@ -20,7 +18,6 @@ from .const import (
     CONF_CITY_LABEL,
     CONF_GOOGLE_ICAL_URL,
     CONF_OUTPUT_DIR,
-    CONF_PROJECT_ROOT,
     CONF_REFRESH_SECONDS,
     CONF_TEMP_UNIT,
     CONF_TIMEZONE,
@@ -30,6 +27,8 @@ from .const import (
     DOMAIN,
 )
 from .http import async_register_views
+from .backend_app.config import AppConfig
+from .backend_app.service import DashboardService
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +36,6 @@ CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.Schema(
             {
-                vol.Optional(CONF_PROJECT_ROOT): cv.string,
                 vol.Optional(CONF_OUTPUT_DIR): cv.string,
                 vol.Optional(CONF_LATITUDE): vol.Coerce(float),
                 vol.Optional(CONF_LONGITUDE): vol.Coerce(float),
@@ -64,45 +62,7 @@ class DashboardRuntime:
     last_error: str | None = None
     last_success: str | None = None
 
-
-@dataclass
-class BackendModules:
-    app_config_cls: Any
-    dashboard_service_cls: Any
-
-
-def _resolve_project_root(hass: HomeAssistant, cfg: dict[str, Any]) -> Path:
-    configured = cfg.get(CONF_PROJECT_ROOT)
-    if configured:
-        return Path(configured).expanduser().resolve()
-
-    # Repository checkout default: <repo>/custom_components/edashboard/__init__.py
-    # -> <repo>
-    return Path(__file__).resolve().parents[2]
-
-
-def _load_backend_modules(project_root: Path) -> BackendModules:
-    backend_app = project_root / "backend" / "app"
-    if not backend_app.exists():
-        raise RuntimeError(
-            f"Backend app folder not found at {backend_app}. "
-            "Set edashboard.project_root to your cloned project path."
-        )
-
-    root_str = str(project_root)
-    if root_str not in sys.path:
-        sys.path.insert(0, root_str)
-
-    config_mod = import_module("backend.app.config")
-    service_mod = import_module("backend.app.service")
-
-    return BackendModules(
-        app_config_cls=getattr(config_mod, "AppConfig"),
-        dashboard_service_cls=getattr(service_mod, "DashboardService"),
-    )
-
-
-def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any], modules: BackendModules, project_root: Path) -> DashboardRuntime:
+def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any]) -> DashboardRuntime:
     lat = float(cfg.get(CONF_LATITUDE, hass.config.latitude))
     lon = float(cfg.get(CONF_LONGITUDE, hass.config.longitude))
 
@@ -119,7 +79,7 @@ def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any], modules: Bac
     output_dir = Path(cfg.get(CONF_OUTPUT_DIR, hass.config.path("www", "edashboard", "output"))).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    app_cfg = modules.app_config_cls(
+    app_cfg = AppConfig(
         width=800,
         height=480,
         refresh_seconds=max(15, refresh_seconds),
@@ -129,14 +89,14 @@ def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any], modules: Bac
         temp_unit=temp_unit,
         wind_unit=wind_unit,
         output_dir=output_dir,
-        secrets_path=project_root / "firmware" / "mysecrets.yaml",
-        backend_config_path=project_root / "backend" / "config.yaml",
-        fonts_dir=project_root / "backend" / "assets" / "fonts",
+        secrets_path=None,
+        backend_config_path=Path(__file__).resolve().parent / "config.yaml",
+        fonts_dir=Path(__file__).resolve().parent / "assets" / "fonts",
         city_label=city_label,
         google_ical_url=google_ical_url,
     )
 
-    service = modules.dashboard_service_cls(app_cfg, google_ical_url)
+    service = DashboardService(app_cfg, google_ical_url)
 
     return DashboardRuntime(
         service=service,
@@ -165,9 +125,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     cfg = config.get(DOMAIN, {})
 
     try:
-        project_root = _resolve_project_root(hass, cfg)
-        modules = await hass.async_add_executor_job(_load_backend_modules, project_root)
-        runtime = _build_runtime_config(hass, cfg, modules, project_root)
+        runtime = _build_runtime_config(hass, cfg)
     except Exception as exc:  # noqa: BLE001
         _LOGGER.error("Failed to initialize eDashboard integration: %s", exc)
         return False

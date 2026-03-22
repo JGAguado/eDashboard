@@ -42,25 +42,22 @@ Manual alternative: copy `custom_components/edashboard` into your Home Assistant
 /config/custom_components/edashboard
 ```
 
-Make sure this repository is available on the Home Assistant host (for example `/config/eDashboard`), because the integration reuses code and assets from `backend/`.
-
 ### 2) Add configuration
 
 In `configuration.yaml`:
 
 ```yaml
 edashboard:
-	project_root: /config/eDashboard
-	refresh_seconds: 300
-	city_label: Vienna
-	timezone: Europe/Vienna
-	temp_unit: C
-	wind_unit: km/h
-	google_ical_url: ""
-	# optional overrides:
-	# latitude: 48.2082
-	# longitude: 16.3738
-	# output_dir: /config/www/edashboard/output
+  refresh_seconds: 300
+  city_label: Vienna
+  timezone: Europe/Vienna
+  temp_unit: C
+  wind_unit: km/h
+  google_ical_url: ""
+  # optional overrides:
+  # latitude: 48.2082
+  # longitude: 16.3738
+  # output_dir: /config/www/edashboard/output
 ```
 
 If `latitude` and `longitude` are omitted, Home Assistant core location is used.
