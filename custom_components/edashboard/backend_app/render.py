@@ -7,7 +7,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from .config import AppConfig
 
@@ -401,7 +401,7 @@ def draw_metrics_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
         )
 
 
-def draw_trend_widget(draw: ImageDraw.ImageDraw,
+def draw_trend_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
                       temps: list[float], pops: list[float], hours: list[str],
                       x: int, y: int, size: Size,
                       position: Positioning, alignment: Alignment,
@@ -435,13 +435,21 @@ def draw_trend_widget(draw: ImageDraw.ImageDraw,
         draw.text((plot_right + 4, baseline_y - 12), f"{pmin:.0f}%", font=font, fill=(120, 120, 120))
 
         span_px = plot_right - plot_left
+        rain_overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        rain_draw = ImageDraw.Draw(rain_overlay)
         for i, p in enumerate(pops_series):
             x0 = plot_left + int(round(i * span_px / series_len))
             x1 = plot_left + int(round((i + 1) * span_px / series_len))
             if x1 <= x0:
                 x1 = x0 + 1
             by = baseline_y - int(((p - pmin) / pspan) * bar_h)
-            draw.rectangle((x0, by, x1, baseline_y), fill=(204, 222, 241))
+            bar_span = max(1, baseline_y - by)
+            for gy in range(by, baseline_y + 1):
+                t = (gy - by) / bar_span
+                alpha = int(170 * (1.0 - t))
+                rain_draw.line((x0, gy, x1, gy), fill=(84, 154, 230, alpha), width=1)
+
+        canvas.alpha_composite(rain_overlay)
 
         points: list[tuple[int, int]] = []
         for i, t in enumerate(temps_series):
@@ -452,10 +460,34 @@ def draw_trend_widget(draw: ImageDraw.ImageDraw,
             points.append((tx, ty))
 
         smooth = _smooth_points(points, steps=10)
-        draw.line(smooth, fill=(225, 177, 104), width=5)
+        trend_color = (225, 177, 104)
 
-    # Next 12h labels in 2h steps.
-    tick_indices = list(range(0, series_len, 2))
+        # Fill area under the trend line with a vertical alpha gradient:
+        # near the line -> trend color, near x-axis -> transparent.
+        if len(smooth) >= 2:
+            poly = list(smooth) + [(smooth[-1][0], baseline_y), (smooth[0][0], baseline_y)]
+            mask = Image.new("L", canvas.size, 0)
+            ImageDraw.Draw(mask).polygon(poly, fill=255)
+
+            grad = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+            gdraw = ImageDraw.Draw(grad)
+            y_top = max(plot_top, min(p[1] for p in smooth))
+            y_bot = baseline_y
+            span = max(1, y_bot - y_top)
+            for gy in range(y_top, y_bot + 1):
+                t = (gy - y_top) / span
+                alpha = int(170 * (1.0 - t))
+                gdraw.line((plot_left, gy, plot_right, gy), fill=(*trend_color, alpha), width=1)
+
+            alpha = grad.split()[3]
+            alpha = ImageChops.multiply(alpha, mask)
+            grad.putalpha(alpha)
+            canvas.alpha_composite(grad)
+
+        draw.line(smooth, fill=trend_color, width=5)
+
+    # Next 12h labels in 1h steps.
+    tick_indices = list(range(0, series_len, 1))
     for idx in tick_indices:
         label = hours[idx]
         x0 = plot_left + int(round(idx * (plot_right - plot_left) / max(1, series_len)))
@@ -667,12 +699,12 @@ def render_dashboard(cfg: AppConfig, weather: dict[str, Any], aqi: dict[str, Any
     for ts in hourly_times[start_idx:window_end]:
         try:
             dt = datetime.fromisoformat(ts)
-            hours.append(dt.strftime("%H:%M"))
+            hours.append(dt.strftime("%H"))
         except Exception:
             hours.append("")
     temps = [float(v) for v in hourly.get("temperature_2m", [])[start_idx:window_end] if v is not None]
     pops = [float(v) for v in hourly.get("precipitation_probability", [])[start_idx:window_end] if v is not None]
-    draw_trend_widget(draw, temps, pops, hours, 0, 0, trend_size, "relative", "top-left", trend_origin, f_chart)
+    draw_trend_widget(img, draw, temps, pops, hours, 0, 0, trend_size, "relative", "top-left", trend_origin, f_chart)
 
 
     # Daily forecast widget (next 7 days, excluding today)

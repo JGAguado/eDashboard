@@ -31,7 +31,7 @@ class ConfigError(RuntimeError):
 
 
 def _read_yaml_optional(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return {}
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text) or {}
