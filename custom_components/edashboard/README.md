@@ -23,6 +23,16 @@ edashboard:
 - `/api/edashboard/latest/bin`
 - `/api/edashboard/latest/meta`
 
+## Output Files
+
+By default, generated files are stored in `/config/www/edashboard/output`.
+There is no `latest/` folder. The files are:
+
+- `latest_rgb.png`
+- `latest_epd.png`
+- `latest_epd.bin`
+- `metadata.json`
+
 ## Home Assistant service
 
 - `edashboard.generate_now`

@@ -77,6 +77,14 @@ There is also a Home Assistant service:
 
 - `edashboard.generate_now`
 
+Output files are written to `/config/www/edashboard/output` by default (or your configured `output_dir`).
+There is no `latest/` folder; the generated files are named:
+
+- `latest_rgb.png`
+- `latest_epd.png`
+- `latest_epd.bin`
+- `metadata.json`
+
 ### 4) Point ESPHome/reTerminal to Home Assistant endpoint
 
 Use Home Assistant as the image backend URL, for example:
