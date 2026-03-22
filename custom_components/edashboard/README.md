@@ -1,6 +1,6 @@
 # eDashboard Home Assistant Integration
 
-This custom component runs the eDashboard rendering pipeline inside Home Assistant and exposes binary/image endpoints for ESPHome and reTerminal clients.
+This custom component runs the eDashboard rendering pipeline inside Home Assistant and exposes image endpoints for ESPHome and reTerminal clients.
 
 ## configuration.yaml
 
@@ -19,7 +19,6 @@ edashboard:
 - `/api/edashboard/generate` (POST)
 - `/api/edashboard/latest/png`
 - `/api/edashboard/latest/dithered.png`
-- `/api/edashboard/latest/bin`
 - `/api/edashboard/latest/meta`
 
 ## Output Files
@@ -29,8 +28,8 @@ There is no `latest/` folder. The files are:
 
 - `latest_rgb.png`
 - `latest_epd.png`
-- `latest_epd.bin`
 - `metadata.json`
+
 
 ## Home Assistant service
 
@@ -81,3 +80,5 @@ display:
     lambda: |-
       it.image(0, 0, id(dashboard_image));
 ```
+
+
