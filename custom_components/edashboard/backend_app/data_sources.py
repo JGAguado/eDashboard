@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
-import re
 
 import requests
 
@@ -22,6 +20,8 @@ AQI_URL = (
     "?latitude={lat}&longitude={lon}&hourly=european_aqi&timezone=auto"
 )
 
+GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+
 
 def _get_json(url: str) -> dict[str, Any]:
     response = requests.get(url, timeout=30)
@@ -40,85 +40,45 @@ def fetch_aqi(lat: float, lon: float) -> dict[str, Any]:
     return _get_json(AQI_URL.format(lat=lat, lon=lon))
 
 
-def _parse_ics_datetime(value: str) -> datetime | None:
-    raw = value.strip()
-    if not raw:
-        return None
+def geocode_location(name: str) -> dict[str, Any]:
+    query = name.strip()
+    if not query:
+        raise RuntimeError("Location cannot be empty")
 
-    # All-day events.
-    if re.fullmatch(r"\d{8}", raw):
-        dt = datetime.strptime(raw, "%Y%m%d")
-        return dt.replace(tzinfo=timezone.utc)
+    response = requests.get(
+        GEOCODING_URL,
+        params={
+            "name": query,
+            "count": 1,
+            "language": "en",
+            "format": "json",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
 
-    if raw.endswith("Z"):
-        raw = raw[:-1]
-        dt = datetime.strptime(raw, "%Y%m%dT%H%M%S")
-        return dt.replace(tzinfo=timezone.utc)
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Unexpected geocoding response payload")
 
-    if re.fullmatch(r"\d{8}T\d{6}", raw):
-        dt = datetime.strptime(raw, "%Y%m%dT%H%M%S")
-        return dt.replace(tzinfo=timezone.utc)
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        raise RuntimeError(f"No geocoding results for location: {query}")
 
-    return None
+    top = results[0]
+    if not isinstance(top, dict):
+        raise RuntimeError("Invalid geocoding result format")
 
+    latitude = top.get("latitude")
+    longitude = top.get("longitude")
+    timezone_name = top.get("timezone")
+    if latitude is None or longitude is None or not timezone_name:
+        raise RuntimeError("Geocoding result missing latitude/longitude/timezone")
 
-def _unfold_ics_lines(text: str) -> list[str]:
-    lines = text.replace("\r\n", "\n").split("\n")
-    unfolded: list[str] = []
-    for line in lines:
-        if line.startswith((" ", "\t")) and unfolded:
-            unfolded[-1] += line[1:]
-        else:
-            unfolded.append(line)
-    return unfolded
-
-
-def fetch_next_calendar_event(ical_url: str | None) -> dict[str, str] | None:
-    if not ical_url:
-        return None
-
-    try:
-        response = requests.get(ical_url, timeout=30)
-        response.raise_for_status()
-        lines = _unfold_ics_lines(response.text)
-    except Exception:
-        return None
-
-    now = datetime.now(timezone.utc)
-    in_event = False
-    current_start: datetime | None = None
-    current_summary = ""
-    next_event: tuple[datetime, str] | None = None
-
-    for line in lines:
-        if line == "BEGIN:VEVENT":
-            in_event = True
-            current_start = None
-            current_summary = ""
-            continue
-
-        if line == "END:VEVENT":
-            if current_start and current_start >= now:
-                if next_event is None or current_start < next_event[0]:
-                    next_event = (current_start, current_summary or "Untitled")
-            in_event = False
-            continue
-
-        if not in_event:
-            continue
-
-        if line.startswith("DTSTART"):
-            _, value = line.split(":", 1)
-            current_start = _parse_ics_datetime(value)
-        elif line.startswith("SUMMARY"):
-            _, value = line.split(":", 1)
-            current_summary = value.strip()
-
-    if not next_event:
-        return None
-
-    dt, title = next_event
     return {
-        "title": title,
-        "iso": dt.isoformat(),
+        "latitude": float(latitude),
+        "longitude": float(longitude),
+        "timezone": str(timezone_name),
+        "name": str(top.get("name") or query),
+        "country": str(top.get("country") or ""),
     }

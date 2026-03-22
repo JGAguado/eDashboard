@@ -15,19 +15,17 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
-    CONF_CITY_LABEL,
-    CONF_GOOGLE_ICAL_URL,
+    CONF_LOCATION,
     CONF_OUTPUT_DIR,
     CONF_REFRESH_SECONDS,
     CONF_TEMP_UNIT,
-    CONF_TIMEZONE,
     CONF_WIND_UNIT,
-    DEFAULT_CITY_LABEL,
     DEFAULT_REFRESH_SECONDS,
     DOMAIN,
 )
 from .http import async_register_views
 from .backend_app.config import AppConfig
+from .backend_app.data_sources import geocode_location
 from .backend_app.service import DashboardService
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,12 +37,10 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_OUTPUT_DIR): cv.string,
                 vol.Optional(CONF_LATITUDE): vol.Coerce(float),
                 vol.Optional(CONF_LONGITUDE): vol.Coerce(float),
-                vol.Optional(CONF_TIMEZONE): cv.string,
+                vol.Optional(CONF_LOCATION): cv.string,
                 vol.Optional(CONF_TEMP_UNIT): vol.In(["C", "F"]),
                 vol.Optional(CONF_WIND_UNIT): vol.In(["km/h", "mph", "m/s", "knots"]),
                 vol.Optional(CONF_REFRESH_SECONDS): vol.All(vol.Coerce(int), vol.Range(min=15)),
-                vol.Optional(CONF_CITY_LABEL): cv.string,
-                vol.Optional(CONF_GOOGLE_ICAL_URL): cv.string,
             }
         )
     },
@@ -62,11 +58,14 @@ class DashboardRuntime:
     last_error: str | None = None
     last_success: str | None = None
 
-def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any]) -> DashboardRuntime:
-    lat = float(cfg.get(CONF_LATITUDE, hass.config.latitude))
-    lon = float(cfg.get(CONF_LONGITUDE, hass.config.longitude))
-
-    timezone = str(cfg.get(CONF_TIMEZONE, hass.config.time_zone or "UTC"))
+def _build_runtime_config(
+    hass: HomeAssistant,
+    cfg: dict[str, Any],
+    lat: float,
+    lon: float,
+    timezone: str,
+    location_name: str,
+) -> DashboardRuntime:
 
     # Home Assistant unit APIs changed across versions. Keep defaults stable and
     # infer metric from configured temperature unit when available.
@@ -77,8 +76,6 @@ def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any]) -> Dashboard
     wind_unit = str(cfg.get(CONF_WIND_UNIT, "km/h" if inferred_metric else "mph"))
 
     refresh_seconds = int(cfg.get(CONF_REFRESH_SECONDS, DEFAULT_REFRESH_SECONDS))
-    city_label = str(cfg.get(CONF_CITY_LABEL, hass.config.location_name or DEFAULT_CITY_LABEL)).strip() or DEFAULT_CITY_LABEL
-    google_ical_url = str(cfg.get(CONF_GOOGLE_ICAL_URL, "")).strip() or None
 
     output_dir = Path(cfg.get(CONF_OUTPUT_DIR, hass.config.path("www", "edashboard", "output"))).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -96,11 +93,9 @@ def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any]) -> Dashboard
         secrets_path=None,
         backend_config_path=Path(__file__).resolve().parent / "config.yaml",
         fonts_dir=Path(__file__).resolve().parent / "assets" / "fonts",
-        city_label=city_label,
-        google_ical_url=google_ical_url,
     )
 
-    service = DashboardService(app_cfg, google_ical_url)
+    service = DashboardService(app_cfg, location_name)
 
     return DashboardRuntime(
         service=service,
@@ -129,7 +124,23 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     cfg = config.get(DOMAIN, {})
 
     try:
-        runtime = _build_runtime_config(hass, cfg)
+        location = str(cfg.get(CONF_LOCATION, "")).strip()
+        if location:
+            geo = await hass.async_add_executor_job(geocode_location, location)
+            lat = float(geo["latitude"])
+            lon = float(geo["longitude"])
+            timezone = str(geo["timezone"])
+            location_name = str(geo.get("name") or location)
+            country = str(geo.get("country") or "").strip()
+            if country:
+                location_name = f"{location_name}, {country}"
+        else:
+            lat = float(cfg.get(CONF_LATITUDE, hass.config.latitude))
+            lon = float(cfg.get(CONF_LONGITUDE, hass.config.longitude))
+            timezone = str(hass.config.time_zone or "UTC")
+            location_name = str(hass.config.location_name or "Home").strip() or "Home"
+
+        runtime = _build_runtime_config(hass, cfg, lat, lon, timezone, location_name)
     except Exception as exc:  # noqa: BLE001
         _LOGGER.error("Failed to initialize eDashboard integration: %s", exc)
         return False

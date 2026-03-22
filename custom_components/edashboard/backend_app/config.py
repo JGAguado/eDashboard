@@ -22,8 +22,6 @@ class AppConfig:
     secrets_path: Path | None = None
     backend_config_path: Path = Path("backend/config.yaml")
     fonts_dir: Path = Path("backend/assets/fonts")
-    city_label: str = "eDashboard"
-    google_ical_url: str | None = None
 
 
 class ConfigError(RuntimeError):
@@ -59,10 +57,7 @@ def load_config() -> AppConfig:
     timezone = str(os.getenv("TIMEZONE", backend_payload.get("timezone", "UTC"))).strip() or "UTC"
     temp_unit = str(os.getenv("TEMP_UNIT", backend_payload.get("temp_unit", "C"))).strip().upper()
     wind_unit = str(os.getenv("WIND_UNIT", backend_payload.get("wind_unit", "km/h"))).strip()
-    google_ical_url = str(os.getenv("GOOGLE_ICAL_URL", backend_payload.get("google_ical_url", ""))).strip() or None
-
     refresh_seconds = int(os.getenv("REFRESH_SECONDS", str(backend_payload.get("refresh_seconds", 60))))
-    city_label = str(os.getenv("CITY_LABEL", backend_payload.get("city_label", "eDashboard"))).strip() or "eDashboard"
 
     return AppConfig(
         timezone=timezone,
@@ -75,6 +70,4 @@ def load_config() -> AppConfig:
         secrets_path=secrets_path,
         backend_config_path=backend_config_path,
         fonts_dir=fonts_dir,
-        city_label=city_label,
-        google_ical_url=google_ical_url,
     )

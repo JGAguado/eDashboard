@@ -548,8 +548,7 @@ def draw_daily_forecast_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
         )
 
 
-def render_dashboard(cfg: AppConfig, weather: dict[str, Any], aqi: dict[str, Any],
-                     next_event: dict[str, str] | None) -> Image.Image:
+def render_dashboard(cfg: AppConfig, weather: dict[str, Any], aqi: dict[str, Any]) -> Image.Image:
     img = Image.new("RGBA", (cfg.width, cfg.height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
 

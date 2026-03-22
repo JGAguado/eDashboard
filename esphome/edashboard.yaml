@@ -1,0 +1,283 @@
+substitutions:
+  device_name: reterminal_1002
+  friendly_name: eDashboard
+  # Home Assistant endpoint exposed by this repo's custom component:
+  # /api/edashboard/latest/dithered.png (alias: /api/edashboard/latest/epd.png)
+  image_url: "http://homeassistant.local:8123/api/edashboard/latest/dithered.png"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2025.2.0
+  on_boot:
+    - priority: 600
+      then:
+        - output.turn_on: bsp_sd_enable
+        - output.turn_on: bsp_battery_enable
+        - delay: 200ms
+        - component.update: battery_voltage
+        - component.update: battery_level
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  on_connect:
+    then:
+      - logger.log: "WiFi connected, requesting dashboard image"
+      - component.update: dashboard_image
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: "ChangeMe1234"
+
+captive_portal:
+
+http_request:
+  verify_ssl: false
+  timeout: 20s
+  watchdog_timeout: 25s
+
+deep_sleep:
+  id: deep_sleep_ctrl
+  run_duration: 2min
+  sleep_duration: 1h
+
+font:
+  - file: "../custom_components/edashboard/assets/fonts/Jost.ttf"
+    id: jost_20
+    size: 20
+    glyphs: "0123456789.%"
+
+image:
+  - file: mdi:battery-outline
+    id: batt_icon_empty
+    resize: 25x25
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:battery-20
+    id: batt_icon_20
+    resize: 25x25
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:battery-40
+    id: batt_icon_40
+    resize: 25x25
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:battery-60
+    id: batt_icon_60
+    resize: 25x25
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:battery-80
+    id: batt_icon_80
+    resize: 25x25
+    type: BINARY
+    transparency: chroma_key
+  - file: mdi:battery
+    id: batt_icon_full
+    resize: 25x25
+    type: BINARY
+    transparency: chroma_key
+
+# Integrated board model still requires SPI component enabled.
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+i2c:
+  scl: GPIO20
+  sda: GPIO19
+
+online_image:
+  - id: dashboard_image
+    url: ${image_url}
+    format: png
+    type: RGB565
+    buffer_size: 65536
+    on_download_finished:
+      - logger.log: "Dashboard image downloaded"
+      - component.update: epaper_display
+      - delay: 30s
+      - deep_sleep.enter: deep_sleep_ctrl
+    on_error:
+      - logger.log: "Dashboard image download failed"
+      - delay: 2s
+      - deep_sleep.enter: deep_sleep_ctrl
+
+display:
+  - platform: epaper_spi
+    id: epaper_display
+    model: Seeed-reTerminal-E1002
+    update_interval: never
+    full_update_every: 10
+    lambda: |-
+      it.image(0, 0, id(dashboard_image));
+
+      // Place battery widget above the update-time slot:
+      // x = width - 12, y = 25, size = (120, 25), alignment = bottom-right.
+      const int widget_w = 100;
+      const int widget_h = 25;
+      const int widget_x = it.get_width() - 10 - widget_w;
+      const int widget_y = 25 - widget_h;
+      const Color ui_gray(88, 88, 88);
+
+      // Cover the backend-generated update-time text/icon with a white patch first.
+      it.filled_rectangle(widget_x, widget_y, widget_w, widget_h, Color(255, 255, 255));
+
+      float batt = id(battery_level).state;
+      if (isnan(batt)) {
+        batt = 0.0f;
+      }
+      if (batt < 0.0f) batt = 0.0f;
+      if (batt > 100.0f) batt = 100.0f;
+
+      char batt_txt[12];
+      snprintf(batt_txt, sizeof(batt_txt), "%.1f%%", batt);
+
+      int xb = 0;
+      int yb = 0;
+      int tw = 0;
+      int th = 0;
+      it.get_text_bounds(0, 0, batt_txt, id(jost_20), TextAlign::TOP_LEFT, &xb, &yb, &tw, &th);
+      const int text_y = widget_y + ((widget_h - th) / 2);
+      it.printf(widget_x, text_y, id(jost_20), ui_gray, TextAlign::TOP_LEFT, "%s", batt_txt);
+
+      const int icon_x = widget_x + tw + 10;
+      const int icon_y = widget_y;
+      if (batt >= 95.0f) {
+        it.image(icon_x, icon_y, id(batt_icon_full), ui_gray, Color(255, 255, 255));
+      } else if (batt >= 75.0f) {
+        it.image(icon_x, icon_y, id(batt_icon_80), ui_gray, Color(255, 255, 255));
+      } else if (batt >= 55.0f) {
+        it.image(icon_x, icon_y, id(batt_icon_60), ui_gray, Color(255, 255, 255));
+      } else if (batt >= 35.0f) {
+        it.image(icon_x, icon_y, id(batt_icon_40), ui_gray, Color(255, 255, 255));
+      } else if (batt >= 15.0f) {
+        it.image(icon_x, icon_y, id(batt_icon_20), ui_gray, Color(255, 255, 255));
+      } else {
+        it.image(icon_x, icon_y, id(batt_icon_empty), ui_gray, Color(255, 255, 255));
+      }
+
+button:
+  - platform: template
+    name: "Refresh Dashboard Now"
+    on_press:
+      - component.update: dashboard_image
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal dB"
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: copy
+    source_id: wifi_signal_db
+    name: "WiFi Signal Percent"
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+    filters:
+      - lambda: return min(max(2.0f * (x + 100.0f), 0.0f), 100.0f);
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+  - platform: internal_temperature
+    name: "Internal Temperature"
+    update_interval: 60s
+  - platform: adc
+    id: battery_voltage
+    pin: GPIO1
+    name: "Battery Voltage"
+    attenuation: 12db
+    update_interval: 60s
+    filters:
+      - multiply: 2.0
+  - platform: template
+    id: battery_level
+    name: "Battery Level"
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      float v = id(battery_voltage).state;
+      float pct = (v - 3.27f) / (4.15f - 3.27f) * 100.0f;
+      if (pct < 0.0f) pct = 0.0f;
+      if (pct > 100.0f) pct = 100.0f;
+      return pct;
+
+binary_sensor:
+  - platform: status
+    name: "${friendly_name} Online"
+  - platform: gpio
+    id: button_right
+    name: "Right Button"
+    pin:
+      number: GPIO4
+      mode: INPUT_PULLUP
+      inverted: true
+    on_press:
+      then:
+        - logger.log: "Right button pressed"
+        - component.update: dashboard_image
+  - platform: gpio
+    id: button_left
+    name: "Left Button"
+    pin:
+      number: GPIO5
+      mode: INPUT_PULLUP
+      inverted: true
+    on_press:
+      then:
+        - logger.log: "Left button pressed"
+        - component.update: dashboard_image
+  - platform: gpio
+    id: button_center
+    name: "Center Button"
+    pin:
+      number: GPIO3
+      mode: INPUT_PULLUP
+      inverted: true
+    on_press:
+      then:
+        - logger.log: "Center button pressed"
+        - component.update: dashboard_image
+
+output:
+  - platform: gpio
+    pin: GPIO6
+    id: bsp_led
+    inverted: true
+  - platform: gpio
+    pin: GPIO16
+    id: bsp_sd_enable
+  - platform: gpio
+    pin: GPIO21
+    id: bsp_battery_enable
+
+light:
+  - platform: binary
+    name: "Onboard LED"
+    output: bsp_led
+    id: onboard_led
+
+text_sensor:
+  - platform: version
+    name: "${friendly_name} ESPHome Version"

@@ -9,15 +9,15 @@ from typing import Any
 import json
 
 from .config import AppConfig
-from .data_sources import fetch_aqi, fetch_next_calendar_event, fetch_weather
+from .data_sources import fetch_aqi, fetch_weather
 from .epaper_format import dither_to_epd7, write_epd_binary
 from .render import render_dashboard
 
 
 class DashboardService:
-    def __init__(self, config: AppConfig, ical_url: str | None = None) -> None:
+    def __init__(self, config: AppConfig, location_name: str | None = None) -> None:
         self.config = config
-        self.ical_url = ical_url
+        self.location_name = location_name
         self.lock = Lock()
         self.stop_event = Event()
         self.thread: Thread | None = None
@@ -45,9 +45,8 @@ class DashboardService:
         with self.lock:
             weather = fetch_weather(self.config.latitude, self.config.longitude)
             aqi = fetch_aqi(self.config.latitude, self.config.longitude)
-            next_event = fetch_next_calendar_event(self.ical_url)
 
-            rgb = render_dashboard(self.config, weather, aqi, next_event)
+            rgb = render_dashboard(self.config, weather, aqi)
             rgb.save(self.rgb_path, format="PNG", optimize=True)
 
             indexed = dither_to_epd7(rgb)
@@ -64,6 +63,7 @@ class DashboardService:
                 "binary_sha256": sha256(self.binary_path.read_bytes()).hexdigest(),
                 "calendar_event": next_event,
                 "config": {
+                    "location": self.location_name,
                     "latitude": self.config.latitude,
                     "longitude": self.config.longitude,
                     "timezone": self.config.timezone,
