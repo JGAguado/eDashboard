@@ -429,8 +429,8 @@ def draw_trend_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
         bar_h = baseline_y - plot_top
 
         # Left axis (temperature) and right axis (rain probability), both full-range scaled.
-        draw.text((px + 1, plot_top - 2), f"{tmax:.0f}", font=font, fill=(120, 120, 120))
-        draw.text((px + 1, baseline_y - 12), f"{tmin:.0f}", font=font, fill=(120, 120, 120))
+        draw.text((px + 1, plot_top - 2), f"{tmax:.0f}º", font=font, fill=(120, 120, 120))
+        draw.text((px + 1, baseline_y - 12), f"{tmin:.0f}º", font=font, fill=(120, 120, 120))
         draw.text((plot_right + 4, plot_top - 2), f"{pmax:.0f}%", font=font, fill=(120, 120, 120))
         draw.text((plot_right + 4, baseline_y - 12), f"{pmin:.0f}%", font=font, fill=(120, 120, 120))
 

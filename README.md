@@ -4,28 +4,8 @@ Home Assistant custom component that generates dashboard images and EDB7 binary 
 
 ## Project Layout
 
-- `backend/`
 - `custom_components/edashboard/`
-- `docker-compose.yml`
 - `README.md`
-
-## Backend (Docker)
-
-From repository root:
-
-```bash
-docker compose up --build
-```
-
-Main endpoints:
-
-- `http://localhost:8090/health`
-- `http://localhost:8090/latest/png`
-- `http://localhost:8090/latest/dithered.png`
-- `http://localhost:8090/latest/bin`
-- `http://localhost:8090/latest/meta`
-
-Backend reads runtime settings from `backend/config.yaml`.
 
 ## Home Assistant Custom Component
 
