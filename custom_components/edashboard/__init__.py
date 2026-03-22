@@ -68,9 +68,13 @@ def _build_runtime_config(hass: HomeAssistant, cfg: dict[str, Any]) -> Dashboard
 
     timezone = str(cfg.get(CONF_TIMEZONE, hass.config.time_zone or "UTC"))
 
-    is_metric = hass.config.units.is_metric
-    temp_unit = str(cfg.get(CONF_TEMP_UNIT, "C" if is_metric else "F")).upper()
-    wind_unit = str(cfg.get(CONF_WIND_UNIT, "km/h" if is_metric else "mph"))
+    # Home Assistant unit APIs changed across versions. Keep defaults stable and
+    # infer metric from configured temperature unit when available.
+    ha_temp_unit = str(getattr(hass.config.units, "temperature_unit", "")).upper()
+    inferred_metric = "C" in ha_temp_unit
+
+    temp_unit = str(cfg.get(CONF_TEMP_UNIT, "C" if inferred_metric else "F")).upper()
+    wind_unit = str(cfg.get(CONF_WIND_UNIT, "km/h" if inferred_metric else "mph"))
 
     refresh_seconds = int(cfg.get(CONF_REFRESH_SECONDS, DEFAULT_REFRESH_SECONDS))
     city_label = str(cfg.get(CONF_CITY_LABEL, hass.config.location_name or DEFAULT_CITY_LABEL)).strip() or DEFAULT_CITY_LABEL
