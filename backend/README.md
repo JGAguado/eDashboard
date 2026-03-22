@@ -26,15 +26,26 @@ Service URL:
 - `http://localhost:8090/latest/meta`
 - `POST http://localhost:8090/generate` to force refresh
 
+## Run Inside Home Assistant
+
+If you prefer Home Assistant-hosted generation instead of Docker/FastAPI, use the custom component at `custom_components/edashboard/`.
+
+That integration reuses this backend render pipeline and exposes equivalent endpoints under Home Assistant:
+
+- `/api/edashboard/latest/png`
+- `/api/edashboard/latest/dithered.png`
+- `/api/edashboard/latest/bin`
+- `/api/edashboard/latest/meta`
+- `POST /api/edashboard/generate`
+
+See the repository root README for setup details.
+
 ## Configuration
 
-The service reads location secrets from `firmware/mysecrets.yaml`:
+The service reads runtime settings from `backend/config.yaml`:
 
 - `latitude`
 - `longitude`
-
-The service reads non-secret backend settings from `backend/config.yaml`:
-
 - `refresh_seconds`
 - `city_label`
 - `timezone`
@@ -47,6 +58,7 @@ Optional environment variables in `docker-compose.yml`:
 - `REFRESH_SECONDS` (default `60`)
 - `CITY_LABEL` (title text)
 - `BACKEND_CONFIG_PATH` (defaults to `/app/backend/config.yaml`)
+- `LATITUDE`, `LONGITUDE`
 - `TIMEZONE`, `TEMP_UNIT`, `WIND_UNIT`, `GOOGLE_ICAL_URL`
 
 ## Binary Format (`EDB7-v1`)

@@ -1,6 +1,10 @@
 # Backend runtime configuration (non-secret settings)
 # Environment variables still override these values.
 
+# Location (required for weather and AQI)
+latitude: 48.2082
+longitude: 16.3738
+
 # Refresh interval for automatic generation loop (seconds)
 refresh_seconds: 60
 

@@ -19,25 +19,15 @@ class AppConfig:
     temp_unit: str = "C"
     wind_unit: str = "km/h"
     output_dir: Path = Path("backend/output")
-    secrets_path: Path = Path("firmware/mysecrets.yaml")
+    secrets_path: Path | None = None
     backend_config_path: Path = Path("backend/config.yaml")
-    fonts_dir: Path = Path("firmware/aux_resources/fonts")
+    fonts_dir: Path = Path("backend/assets/fonts")
     city_label: str = "eDashboard"
     google_ical_url: str | None = None
 
 
 class ConfigError(RuntimeError):
     pass
-
-
-def _read_yaml(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise ConfigError(f"Secrets file not found: {path}")
-    text = path.read_text(encoding="utf-8")
-    data = yaml.safe_load(text) or {}
-    if not isinstance(data, dict):
-        raise ConfigError("Secrets file must contain a top-level YAML object")
-    return data
 
 
 def _read_yaml_optional(path: Path) -> dict[str, Any]:
@@ -52,18 +42,19 @@ def _read_yaml_optional(path: Path) -> dict[str, Any]:
 
 def load_config() -> AppConfig:
     repo_root = Path(os.getenv("APP_ROOT", ".")).resolve()
-    secrets_path = Path(os.getenv("SECRETS_PATH", repo_root / "firmware/mysecrets.yaml")).resolve()
+    secrets_path_env = os.getenv("SECRETS_PATH", "").strip()
+    secrets_path = Path(secrets_path_env).resolve() if secrets_path_env else None
     backend_config_path = Path(os.getenv("BACKEND_CONFIG_PATH", repo_root / "backend/config.yaml")).resolve()
     output_dir = Path(os.getenv("OUTPUT_DIR", repo_root / "backend/output")).resolve()
-    fonts_dir = Path(os.getenv("FONTS_DIR", repo_root / "firmware/aux_resources/fonts")).resolve()
+    fonts_dir = Path(os.getenv("FONTS_DIR", repo_root / "backend/assets/fonts")).resolve()
 
-    payload = _read_yaml(secrets_path)
+    payload = _read_yaml_optional(secrets_path) if secrets_path else {}
     backend_payload = _read_yaml_optional(backend_config_path)
 
-    latitude = float(payload.get("latitude", 0.0))
-    longitude = float(payload.get("longitude", 0.0))
+    latitude = float(os.getenv("LATITUDE", backend_payload.get("latitude", payload.get("latitude", 0.0))))
+    longitude = float(os.getenv("LONGITUDE", backend_payload.get("longitude", payload.get("longitude", 0.0))))
     if latitude == 0.0 and longitude == 0.0:
-        raise ConfigError("latitude and longitude are required in firmware/mysecrets.yaml")
+        raise ConfigError("latitude and longitude are required (backend/config.yaml or LATITUDE/LONGITUDE env)")
 
     timezone = str(os.getenv("TIMEZONE", backend_payload.get("timezone", "UTC"))).strip() or "UTC"
     temp_unit = str(os.getenv("TEMP_UNIT", backend_payload.get("temp_unit", "C"))).strip().upper()

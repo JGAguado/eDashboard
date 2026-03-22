@@ -1,0 +1,3 @@
+generate_now:
+  name: Generate Dashboard Now
+  description: Force immediate generation of eDashboard images and binary output.
