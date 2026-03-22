@@ -13,7 +13,7 @@ EPD7_PALETTE = [
     (0, 95, 200),     # 3 blue
     (220, 0, 0),      # 4 red
     (245, 205, 0),    # 5 yellow
-    (250, 120, 0),    # 6 orange
+    (0, 255, 255),    # 6 cyan (orange is not native on Spectra E6)
 ]
 
 
