@@ -4,4 +4,8 @@
 .vscode/launch.json
 .vscode/ipch
 
-mysecrets.yaml
+backend/output/
+Instructions.md
+
+__pycache__/
+*.pyc
