@@ -1,0 +1,20 @@
+# Backend runtime configuration (non-secret settings)
+# Environment variables still override these values.
+
+# Refresh interval for automatic generation loop (seconds)
+refresh_seconds: 60
+
+# Dashboard location label
+city_label: Vienna
+
+# Timezone used by backend clock/rendering
+# Use IANA timezone when possible (e.g. Europe/Vienna)
+# POSIX TZ strings are also accepted as fallback.
+timezone: CET-1CEST,M3.5.0,M10.5.0/3
+
+# Display units used by backend rendering
+temp_unit: C
+wind_unit: km/h
+
+# Optional Google Calendar iCal URL for next-event line
+google_ical_url: ""

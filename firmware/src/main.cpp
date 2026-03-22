@@ -14,6 +14,7 @@
 #include "calendar_api.h"
 #include "battery.h"
 #include "display_renderer.h"
+#include "backend_client.h"
 #include "icons.h"
 
 // ---- Display instance (global, PSRAM-backed buffer) ----
@@ -121,26 +122,33 @@ void setup() {
     // 7. Read battery
     BatteryData battery = batteryRead();
 
-    // 8. Disconnect WiFi to save power
-    wifiDisconnect();
-
-    // 9. Now initialise display hardware (deferred to free DMA memory for SSL)
+    // 8. Now initialise display hardware (deferred to free DMA memory for SSL)
     displayInit(display);
 
-    // 10. Build dashboard data
-    bool useCelsius = (strcmp(SECRET_TEMP_UNIT, "C") == 0);
-    static DashboardData dashData;
-    memset(&dashData, 0, sizeof(dashData));
-    dashData.now           = now;
-    dashData.battery       = battery;
-    dashData.weather       = weather;
-    dashData.calendar      = calendar;
-    dashData.useCelsius    = useCelsius;
-    strlcpy(dashData.windUnit, SECRET_WIND_UNIT, sizeof(dashData.windUnit));
-    dashData.tzOffsetHours = tzOffset;
+    // 9. Prefer pulling the pre-rendered image from backend.
+    bool backendRendered = false;
+    if (wifiOk) {
+        backendRendered = backendRenderFromBinary(display, SECRET_BACKEND_IMAGE_URL);
+    }
 
-    // 11. Render the display
-    displayRender(display, dashData);
+    // 10. Fallback to onboard renderer if backend image is unavailable.
+    if (!backendRendered) {
+        bool useCelsius = (strcmp(SECRET_TEMP_UNIT, "C") == 0);
+        static DashboardData dashData;
+        memset(&dashData, 0, sizeof(dashData));
+        dashData.now           = now;
+        dashData.battery       = battery;
+        dashData.weather       = weather;
+        dashData.calendar      = calendar;
+        dashData.useCelsius    = useCelsius;
+        strlcpy(dashData.windUnit, SECRET_WIND_UNIT, sizeof(dashData.windUnit));
+        dashData.tzOffsetHours = tzOffset;
+
+        displayRender(display, dashData);
+    }
+
+    // 11. Disconnect WiFi to save power
+    wifiDisconnect();
 
     // 12. Hibernate the display
     display.hibernate();

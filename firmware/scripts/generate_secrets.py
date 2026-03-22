@@ -1,8 +1,8 @@
 """
-PlatformIO pre-build script — generates include/secrets_gen.h from secrets.yaml
+PlatformIO pre-build script — generates include/secrets_gen.h from secrets file
 
 This is a minimal YAML parser that handles only the flat key: value pairs
-used in secrets.yaml.  No external YAML library is required.
+used in secrets files. No external YAML library is required.
 """
 
 import os
@@ -84,6 +84,9 @@ def generate(source, target):
     define_str("SECRET_TEMP_UNIT", "temp_unit", "C")
     define_str("SECRET_WIND_UNIT", "wind_unit", "km/h")
 
+    # Backend image URL
+    define_str("SECRET_BACKEND_IMAGE_URL", "backend_image_url", "")
+
     # Sleep settings
     define_num("SECRET_NIGHT_START", "night_mode_start", "23")
     define_num("SECRET_NIGHT_END", "night_mode_end", "7")
@@ -99,15 +102,13 @@ def generate(source, target):
 
 # Paths
 project_dir = env.subst("$PROJECT_DIR")
-source_yaml = os.path.join(project_dir, "secrets.yaml")
+mysecrets_yaml = os.path.join(project_dir, "mysecrets.yaml")
+fallback_yaml = os.path.join(project_dir, "secrets.yaml")
+source_yaml = mysecrets_yaml if os.path.exists(mysecrets_yaml) else fallback_yaml
 target_h = os.path.join(project_dir, "include", "secrets_gen.h")
 
 # Ensure include dir exists
 os.makedirs(os.path.dirname(target_h), exist_ok=True)
 
-# Generate if source is newer than target (or target doesn't exist)
-if not os.path.exists(target_h) or \
-   os.path.getmtime(source_yaml) > os.path.getmtime(target_h):
-    generate(source_yaml, target_h)
-else:
-    print("[generate_secrets] secrets_gen.h is up to date")
+# Always regenerate to prevent stale secrets from previous builds.
+generate(source_yaml, target_h)

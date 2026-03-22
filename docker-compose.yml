@@ -1,0 +1,22 @@
+services:
+  image-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: edashboard-image-backend
+    ports:
+      - "8090:8090"
+    environment:
+      - APP_ROOT=/app
+      - SECRETS_PATH=/app/firmware/mysecrets.yaml
+      - OUTPUT_DIR=/app/backend/output
+      - REFRESH_SECONDS=60
+      - CITY_LABEL=eDashboard
+      - PORT=8090
+    command: sh -c "uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8090} --reload --reload-dir /app/backend/app"
+    volumes:
+      - ./firmware/mysecrets.yaml:/app/firmware/mysecrets.yaml:ro
+      - ./backend/app:/app/backend/app
+      - ./backend/assets:/app/backend/assets
+      - ./backend/output:/app/backend/output
+    restart: unless-stopped
