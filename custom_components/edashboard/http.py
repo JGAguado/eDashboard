@@ -49,12 +49,18 @@ _NO_CACHE_HEADERS = {
 }
 
 
-async def _latest_file_response(runtime: Any, path: Path, not_found_message: str) -> web.FileResponse:
+async def _latest_file_bytes_response(
+    runtime: Any,
+    path: Path,
+    not_found_message: str,
+    content_type: str,
+) -> web.Response:
     # Keep reads consistent with the generation transaction to avoid returning
     # mixed versions when a file is requested while a refresh is running.
     async with runtime.generate_lock:
         _ensure_file(path, not_found_message)
-        return web.FileResponse(path, headers=_NO_CACHE_HEADERS)
+        body = path.read_bytes()
+    return web.Response(body=body, content_type=content_type, headers=_NO_CACHE_HEADERS)
 
 
 class EDashboardHealthView(HomeAssistantView):
@@ -111,10 +117,15 @@ class EDashboardLatestPngView(HomeAssistantView):
     name = "api:edashboard:latest_png"
     requires_auth = False
 
-    async def get(self, request: web.Request) -> web.FileResponse:
+    async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         runtime = _runtime(hass)
-        return await _latest_file_response(runtime, runtime.service.rgb_path, "No PNG generated yet")
+        return await _latest_file_bytes_response(
+            runtime,
+            runtime.service.rgb_path,
+            "No PNG generated yet",
+            "image/png",
+        )
 
 
 class EDashboardLatestDitheredView(HomeAssistantView):
@@ -122,10 +133,31 @@ class EDashboardLatestDitheredView(HomeAssistantView):
     name = "api:edashboard:latest_dithered"
     requires_auth = False
 
-    async def get(self, request: web.Request) -> web.FileResponse:
+    async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         runtime = _runtime(hass)
-        return await _latest_file_response(runtime, runtime.service.dithered_path, "No dithered PNG generated yet")
+        return await _latest_file_bytes_response(
+            runtime,
+            runtime.service.dithered_path,
+            "No dithered PNG generated yet",
+            "image/png",
+        )
+
+
+class EDashboardLatestEpdView(HomeAssistantView):
+    url = "/api/edashboard/latest/epd"
+    name = "api:edashboard:latest_epd"
+    requires_auth = False
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = request.app["hass"]
+        runtime = _runtime(hass)
+        return await _latest_file_bytes_response(
+            runtime,
+            runtime.service.dithered_path,
+            "No dithered PNG generated yet",
+            "image/png",
+        )
 
 
 class EDashboardLatestBinView(HomeAssistantView):
@@ -133,10 +165,15 @@ class EDashboardLatestBinView(HomeAssistantView):
     name = "api:edashboard:latest_bin"
     requires_auth = False
 
-    async def get(self, request: web.Request) -> web.FileResponse:
+    async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         runtime = _runtime(hass)
-        return await _latest_file_response(runtime, runtime.service.binary_path, "No binary payload generated yet")
+        return await _latest_file_bytes_response(
+            runtime,
+            runtime.service.binary_path,
+            "No binary payload generated yet",
+            "application/octet-stream",
+        )
 
 
 async def async_register_views(hass: HomeAssistant) -> None:
@@ -145,4 +182,5 @@ async def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(EDashboardMetaView())
     hass.http.register_view(EDashboardLatestPngView())
     hass.http.register_view(EDashboardLatestDitheredView())
+    hass.http.register_view(EDashboardLatestEpdView())
     hass.http.register_view(EDashboardLatestBinView())
