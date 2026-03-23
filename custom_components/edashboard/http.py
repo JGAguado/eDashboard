@@ -42,6 +42,21 @@ def _ensure_file(path: Path, message: str) -> None:
         raise web.HTTPNotFound(text=message)
 
 
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+async def _latest_file_response(runtime: Any, path: Path, not_found_message: str) -> web.FileResponse:
+    # Keep reads consistent with the generation transaction to avoid returning
+    # mixed versions when a file is requested while a refresh is running.
+    async with runtime.generate_lock:
+        _ensure_file(path, not_found_message)
+        return web.FileResponse(path, headers=_NO_CACHE_HEADERS)
+
+
 class EDashboardHealthView(HomeAssistantView):
     url = "/api/edashboard/health"
     name = "api:edashboard:health"
@@ -79,13 +94,14 @@ class EDashboardMetaView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         runtime = _runtime(hass)
-        path = runtime.service.metadata_path
-        _ensure_file(path, "No metadata generated yet")
+        async with runtime.generate_lock:
+            path = runtime.service.metadata_path
+            _ensure_file(path, "No metadata generated yet")
 
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise web.HTTPInternalServerError(text=f"Invalid metadata file: {exc}") from exc
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                raise web.HTTPInternalServerError(text=f"Invalid metadata file: {exc}") from exc
 
         return web.json_response(data)
 
@@ -98,9 +114,7 @@ class EDashboardLatestPngView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.FileResponse:
         hass = request.app["hass"]
         runtime = _runtime(hass)
-        path = runtime.service.rgb_path
-        _ensure_file(path, "No PNG generated yet")
-        return web.FileResponse(path)
+        return await _latest_file_response(runtime, runtime.service.rgb_path, "No PNG generated yet")
 
 
 class EDashboardLatestDitheredView(HomeAssistantView):
@@ -111,9 +125,7 @@ class EDashboardLatestDitheredView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.FileResponse:
         hass = request.app["hass"]
         runtime = _runtime(hass)
-        path = runtime.service.dithered_path
-        _ensure_file(path, "No dithered PNG generated yet")
-        return web.FileResponse(path)
+        return await _latest_file_response(runtime, runtime.service.dithered_path, "No dithered PNG generated yet")
 
 
 class EDashboardLatestBinView(HomeAssistantView):
@@ -124,9 +136,7 @@ class EDashboardLatestBinView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.FileResponse:
         hass = request.app["hass"]
         runtime = _runtime(hass)
-        path = runtime.service.binary_path
-        _ensure_file(path, "No binary payload generated yet")
-        return web.FileResponse(path)
+        return await _latest_file_response(runtime, runtime.service.binary_path, "No binary payload generated yet")
 
 
 async def async_register_views(hass: HomeAssistant) -> None:
