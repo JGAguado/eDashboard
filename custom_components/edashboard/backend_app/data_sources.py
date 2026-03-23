@@ -12,7 +12,7 @@ FORECAST_URL = (
     "surface_pressure,precipitation,wind_speed_10m,wind_direction_10m,weather_code,is_day,uv_index"
     "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset"
     "&hourly=temperature_2m,precipitation_probability,weather_code,uv_index"
-    "&forecast_days=4&timezone=auto"
+    "&forecast_days=7&timezone=auto"
 )
 
 AQI_URL = (
