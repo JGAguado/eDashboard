@@ -220,35 +220,53 @@ class EDashboardNamedDitheredView(HomeAssistantView):
         if not dashboard_raw.strip():
             raise web.HTTPNotFound(text="Dashboard name is required")
 
-        base_output = Path(hass.config.path("www", "edashboard", "output")).resolve()
-        candidates = [
-            dashboard_raw.strip(),
-            dashboard_raw.strip().lower(),
-            _sanitize_dashboard_name(dashboard_raw),
-        ]
+        try:
+            base_output = Path(hass.config.path("www", "edashboard", "output")).resolve()
+            names = [
+                dashboard_raw.strip(),
+                dashboard_raw.strip().lower(),
+                _sanitize_dashboard_name(dashboard_raw),
+            ]
 
-        tried: list[str] = []
-        for candidate in candidates:
-            name = _sanitize_dashboard_name(candidate)
-            if not name or name in tried:
-                continue
-            tried.append(name)
+            unique_names: list[str] = []
+            for raw in names:
+                name = _sanitize_dashboard_name(raw)
+                if name and name not in unique_names:
+                    unique_names.append(name)
 
-            direct_path = (base_output / name / "latest_epd.png").resolve()
-            if base_output not in direct_path.parents:
-                continue
-            if not direct_path.exists() or not direct_path.is_file():
-                continue
+            path_candidates: list[Path] = []
+            for name in unique_names:
+                # Multi-dashboard output layout.
+                path_candidates.append(base_output / name / "latest_epd.png")
 
+            # Single-dashboard fallback layout.
+            path_candidates.append(base_output / "latest_epd.png")
+
+            # Runtime fallback path (if integration state is available).
             try:
-                body = direct_path.read_bytes()
-            except OSError as exc:
-                _LOGGER.exception("Failed reading direct dashboard output file: %s", direct_path)
-                raise web.HTTPInternalServerError(text=f"Unable to read generated file: {exc}") from exc
+                runtime = _runtime(hass, unique_names[0] if unique_names else None)
+                runtime_path = Path(runtime.service.dithered_path)
+                if runtime_path not in path_candidates:
+                    path_candidates.append(runtime_path)
+            except web.HTTPException:
+                pass
 
-            return web.Response(body=body, content_type="image/png", headers=_NO_CACHE_HEADERS)
+            for candidate in path_candidates:
+                if not candidate.exists() or not candidate.is_file():
+                    continue
+                try:
+                    body = candidate.read_bytes()
+                except OSError as exc:
+                    _LOGGER.exception("Failed reading dashboard output file: %s", candidate)
+                    continue
+                return web.Response(body=body, content_type="image/png", headers=_NO_CACHE_HEADERS)
 
-        raise web.HTTPNotFound(text=f"No generated dithered image found for dashboard: {dashboard_raw}")
+            raise web.HTTPNotFound(text=f"No generated dithered image found for dashboard: {dashboard_raw}")
+        except web.HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Unexpected error serving dashboard '%s'", dashboard_raw)
+            raise web.HTTPInternalServerError(text=f"Unexpected dashboard API error: {exc}") from exc
 
 
 async def async_register_views(hass: HomeAssistant) -> None:
