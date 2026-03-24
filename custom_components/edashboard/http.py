@@ -29,6 +29,58 @@ def _request_hass(request: web.Request) -> HomeAssistant:
     return hass
 
 
+def _iter_location_candidates(raw_value: str) -> list[str]:
+    base = _sanitize_dashboard_name(raw_value)
+    out: list[str] = []
+    for item in [raw_value.strip(), raw_value.strip().lower(), base, f"weather_{base}"]:
+        name = _sanitize_dashboard_name(item)
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _discover_generated_paths(base_output: Path, names: list[str]) -> list[Path]:
+    paths: list[Path] = []
+
+    # Direct deterministic candidates first.
+    for name in names:
+        paths.append(base_output / name / "latest_epd.png")
+
+    # Single-dashboard fallback layout.
+    paths.append(base_output / "latest_epd.png")
+
+    # Directory scan fallback for near matches.
+    if base_output.exists() and base_output.is_dir():
+        try:
+            children = [p for p in base_output.iterdir() if p.is_dir()]
+        except OSError:
+            children = []
+
+        for child in children:
+            child_name = _sanitize_dashboard_name(child.name)
+            if not child_name:
+                continue
+            if child_name in names:
+                paths.append(child / "latest_epd.png")
+                continue
+
+            for name in names:
+                if child_name.endswith(f"_{name}") or name in child_name:
+                    paths.append(child / "latest_epd.png")
+                    break
+
+    # Deduplicate while preserving order.
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for p in paths:
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+    return unique
+
+
 def _state(hass: HomeAssistant) -> dict[str, Any]:
     state = hass.data.get(DOMAIN)
     if not isinstance(state, dict):
@@ -231,26 +283,9 @@ class EDashboardNamedDitheredView(HomeAssistantView):
                 raise web.HTTPNotFound(text="Location is required")
 
             base_output = Path(hass.config.path("www", "edashboard", "output")).resolve()
-            names = [
-                location_raw.strip(),
-                location_raw.strip().lower(),
-                _sanitize_dashboard_name(location_raw),
-            ]
+            unique_names = _iter_location_candidates(location_raw)
 
-            unique_names: list[str] = []
-            for raw in names:
-                name = _sanitize_dashboard_name(raw)
-                if name and name not in unique_names:
-                    unique_names.append(name)
-
-            path_candidates: list[Path] = []
-            for name in unique_names:
-                # Multi-dashboard output layouts.
-                path_candidates.append(base_output / name / "latest_epd.png")
-                path_candidates.append(base_output / f"weather_{name}" / "latest_epd.png")
-
-            # Single-dashboard fallback layout.
-            path_candidates.append(base_output / "latest_epd.png")
+            path_candidates = _discover_generated_paths(base_output, unique_names)
 
             # Runtime fallback path (if integration state is available).
             try:
@@ -279,6 +314,12 @@ class EDashboardNamedDitheredView(HomeAssistantView):
             raise web.HTTPNotFound(text=f"Dashboard API read error: {exc}") from exc
 
 
+class EDashboardLegacyNamedDitheredView(EDashboardNamedDitheredView):
+    url = "/api/edashboard/{location}"
+    name = "api:edashboard:legacy_location_dithered"
+
+
 async def async_register_views(hass: HomeAssistant) -> None:
     # Expose only location-based dashboard images, e.g. /api/dashboard/vienna.
     hass.http.register_view(EDashboardNamedDitheredView())
+    hass.http.register_view(EDashboardLegacyNamedDitheredView())
