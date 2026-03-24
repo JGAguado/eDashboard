@@ -286,6 +286,54 @@ def draw_datetime_widget(draw: ImageDraw.ImageDraw, now_local: datetime,
     _draw_text(draw, now_local.strftime("%A, %B %d"), font, (32, 32, 32), x, y, position, alignment, origin)
 
 
+def draw_location_widget(draw: ImageDraw.ImageDraw, location_name: str,
+                         x: int, y: int, size: Size,
+                         position: Positioning, alignment: Alignment,
+                         origin: tuple[int, int], font: ImageFont.ImageFont) -> None:
+    _draw_text(draw, location_name, font, (32, 32, 32), x, y, position, alignment, origin)
+
+
+def draw_header_widget(draw: ImageDraw.ImageDraw, now_local: datetime, location_name: str,
+                       x: int, y: int, size: Size,
+                       position: Positioning, alignment: Alignment,
+                       origin: tuple[int, int],
+                       location_font: ImageFont.ImageFont,
+                       date_font: ImageFont.ImageFont) -> None:
+    w, h = size
+    px, py = _place_xy(x, y, size, position, origin, alignment)
+    center_x = px + w // 2
+
+    date_text = now_local.strftime("%A, %B %d")
+    location_size = _text_size(draw, location_name, location_font)
+    date_size = _text_size(draw, date_text, date_font)
+    line_gap = 2
+    block_h = location_size[1] + line_gap + date_size[1]
+    top_y = py + max(0, (h - block_h) // 2)
+
+    draw_location_widget(
+        draw,
+        location_name,
+        center_x,
+        top_y + location_size[1] // 2,
+        (w, location_size[1]),
+        "absolute",
+        "center",
+        (0, 0),
+        location_font,
+    )
+    draw_datetime_widget(
+        draw,
+        now_local,
+        center_x,
+        top_y + location_size[1] + line_gap + date_size[1] // 2,
+        (w, date_size[1]),
+        "absolute",
+        "center",
+        (0, 0),
+        date_font,
+    )
+
+
 def draw_update_time_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw, now_local: datetime,
                             x: int, y: int, size: Size,
                             position: Positioning, alignment: Alignment,
@@ -294,13 +342,15 @@ def draw_update_time_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw, now_
     tw, th = _text_size(draw, time_text, time_font)
     icon_side = size[1]
     gap = 6
-    total_w = tw + gap + icon_side
+    total_w = icon_side + gap + tw
     container_pos = _place_xy(x, y, (total_w, size[1]), position, origin, alignment)
-    text_y = container_pos[1] + max(0, (size[1] - th) // 2)
-    draw.text((container_pos[0], text_y), time_text, font=time_font, fill=(88, 88, 88))
-    icon_cx = container_pos[0] + tw + gap + icon_side // 2
-    icon_cy = text_y + 2 + icon_side // 2
+    icon_cx = container_pos[0] + icon_side // 2
+    icon_cy = container_pos[1] + 6 + size[1] // 2
     _draw_icon(canvas, "refresh.png", icon_cx, icon_cy, (icon_side, icon_side), "absolute", "center")
+
+    text_x = container_pos[0] + icon_side + gap
+    text_y = container_pos[1] + max(0, (size[1] - th) // 2)
+    draw.text((text_x, text_y), time_text, font=time_font, fill=(88, 88, 88))
 
 
 def draw_weather_icon_widget(canvas: Image.Image, icon_name: str,
@@ -409,7 +459,7 @@ def draw_trend_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
                       font: ImageFont.ImageFont) -> None:
     w, h = size
     px, py = _place_xy(x, y, size, position, origin, alignment)
-    axis_pad = 26
+    axis_pad = 35
     plot_left = px + axis_pad
     plot_right = px + w - axis_pad
     plot_top = py + 4
@@ -431,17 +481,31 @@ def draw_trend_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
         # Left axis (temperature) and right axis (rain probability), both full-range scaled.
         draw.text((px + 1, plot_top - 2), f"{tmax:.0f}º", font=font, fill=(120, 120, 120))
         draw.text((px + 1, baseline_y - 12), f"{tmin:.0f}º", font=font, fill=(120, 120, 120))
-        draw.text((plot_right + 4, plot_top - 2), f"{pmax:.0f}%", font=font, fill=(120, 120, 120))
-        draw.text((plot_right + 4, baseline_y - 12), f"{pmin:.0f}%", font=font, fill=(120, 120, 120))
+        draw.text((plot_right + 15, plot_top - 2), f"{pmax:.0f}%", font=font, fill=(120, 120, 120))
+        draw.text((plot_right + 15, baseline_y - 12), f"{pmin:.0f}%", font=font, fill=(120, 120, 120))
 
         span_px = plot_right - plot_left
+        x_points: list[int] = []
+        for i in range(series_len):
+            x_points.append(plot_left + int(round(i * span_px / max(1, series_len - 1))))
+
         rain_overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
         rain_draw = ImageDraw.Draw(rain_overlay)
         for i, p in enumerate(pops_series):
-            x0 = plot_left + int(round(i * span_px / series_len))
-            x1 = plot_left + int(round((i + 1) * span_px / series_len))
+            center_x = x_points[i]
+            if i == 0:
+                x0 = plot_left
+            else:
+                x0 = (x_points[i - 1] + center_x) // 2
+
+            if i == series_len - 1:
+                x1 = plot_right
+            else:
+                x1 = (center_x + x_points[i + 1]) // 2
+
             if x1 <= x0:
                 x1 = x0 + 1
+
             by = baseline_y - int(((p - pmin) / pspan) * bar_h)
             bar_span = max(1, baseline_y - by)
             for gy in range(by, baseline_y + 1):
@@ -453,9 +517,7 @@ def draw_trend_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
 
         points: list[tuple[int, int]] = []
         for i, t in enumerate(temps_series):
-            x0 = plot_left + int(round(i * span_px / series_len))
-            x1 = plot_left + int(round((i + 1) * span_px / series_len))
-            tx = (x0 + x1) // 2
+            tx = x_points[i]
             ty = plot_top + int((tmax - t) * bar_h / tspan)
             points.append((tx, ty))
 
@@ -490,9 +552,7 @@ def draw_trend_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
     tick_indices = list(range(0, series_len, 1))
     for idx in tick_indices:
         label = hours[idx]
-        x0 = plot_left + int(round(idx * (plot_right - plot_left) / max(1, series_len)))
-        x1 = plot_left + int(round((idx + 1) * (plot_right - plot_left) / max(1, series_len)))
-        hx = (x0 + x1) // 2
+        hx = plot_left + int(round(idx * (plot_right - plot_left) / max(1, series_len - 1)))
         hw, hh = _text_size(draw, label, font)
         draw.text((hx - hw // 2, baseline_y + 4), label, font=font, fill=(122, 122, 122))
 
@@ -548,12 +608,18 @@ def draw_daily_forecast_widget(canvas: Image.Image, draw: ImageDraw.ImageDraw,
         )
 
 
-def render_dashboard(cfg: AppConfig, weather: dict[str, Any], aqi: dict[str, Any]) -> Image.Image:
+def render_dashboard(
+    cfg: AppConfig,
+    weather: dict[str, Any],
+    aqi: dict[str, Any],
+    location_name: str | None = None,
+) -> Image.Image:
     img = Image.new("RGBA", (cfg.width, cfg.height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
 
     # Fonts
-    f_date = _pick_font("Jost-SemiBold.ttf", cfg.fonts_dir, 33)
+    f_location = _pick_font("Jost-SemiBold.ttf", cfg.fonts_dir, 33)
+    f_date = _pick_font("Jost.ttf", cfg.fonts_dir, 31)
     f_update = _pick_font("Jost.ttf", cfg.fonts_dir, 20)
     f_temp = _pick_font("Jost-SemiBold.ttf", cfg.fonts_dir, 84)
     f_unit = _pick_font("Jost-SemiBold.ttf", cfg.fonts_dir, 40)
@@ -601,11 +667,22 @@ def render_dashboard(cfg: AppConfig, weather: dict[str, Any], aqi: dict[str, Any
 
     # Top widgets
 
-    bottom_header_y = 45
-    
-    draw_datetime_widget(draw, now_local, 16, bottom_header_y, (400, 45), "absolute", "bottom-left", (0, 0), f_date)
+    header_location = (location_name or "Home").strip() or "Home"
+    draw_header_widget(
+        draw,
+        now_local,
+        header_location,
+        cfg.width // 2,
+        35,
+        (cfg.width - 220, 56),
+        "absolute",
+        "center",
+        (0, 0),
+        f_location,
+        f_date,
+    )
 
-    draw_update_time_widget(img, draw, now_local, cfg.width - 12, bottom_header_y, (120, 25), "absolute", "bottom-right", (0, 0), f_update)
+    draw_update_time_widget(img, draw, now_local, 16, 13, (85, 22), "absolute", "top-left", (0, 0), f_update)
 
     # Current weather group
     cw_origin = (24, 90)
@@ -679,7 +756,7 @@ def render_dashboard(cfg: AppConfig, weather: dict[str, Any], aqi: dict[str, Any
 
 
     # 12h trend widget
-    trend_origin = (30, 270)
+    trend_origin = (20, 270)
     trend_size = (cfg.width - 60, 62)
     start_hour = now_local.replace(minute=0, second=0, microsecond=0)
     start_idx = 0

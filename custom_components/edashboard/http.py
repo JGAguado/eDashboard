@@ -15,15 +15,28 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
-def _runtime(hass: HomeAssistant) -> Any:
-    runtime = hass.data.get(DOMAIN)
-    if runtime is None:
+def _state(hass: HomeAssistant) -> dict[str, Any]:
+    state = hass.data.get(DOMAIN)
+    if not isinstance(state, dict):
         raise web.HTTPServiceUnavailable(text="eDashboard integration is not loaded")
+    runtimes = state.get("runtimes")
+    if not isinstance(runtimes, dict) or not runtimes:
+        raise web.HTTPServiceUnavailable(text="eDashboard integration has no configured dashboards")
+    return state
+
+
+def _runtime(hass: HomeAssistant, dashboard: str | None = None) -> Any:
+    state = _state(hass)
+    runtimes = state["runtimes"]
+    name = (dashboard or state.get("default_dashboard") or "").strip().lower()
+    runtime = runtimes.get(name)
+    if runtime is None:
+        raise web.HTTPNotFound(text=f"Unknown dashboard: {name}")
     return runtime
 
 
-async def _generate_now(hass: HomeAssistant) -> dict[str, Any]:
-    runtime = _runtime(hass)
+async def _generate_now(hass: HomeAssistant, dashboard: str | None = None) -> dict[str, Any]:
+    runtime = _runtime(hass, dashboard)
     async with runtime.generate_lock:
         try:
             metadata = await hass.async_add_executor_job(runtime.service.generate_once)
@@ -70,13 +83,21 @@ class EDashboardHealthView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
-        runtime = _runtime(hass)
+        state = _state(hass)
+        runtimes = state["runtimes"]
+        dashboards: dict[str, Any] = {}
+        for name, runtime in runtimes.items():
+            dashboards[name] = {
+                "last_success": runtime.last_success,
+                "last_error": runtime.last_error,
+                "output_dir": str(runtime.output_dir),
+                "refresh_seconds": runtime.refresh_seconds,
+            }
+
         payload = {
             "status": "ok",
-            "last_success": runtime.last_success,
-            "last_error": runtime.last_error,
-            "output_dir": str(runtime.output_dir),
-            "refresh_seconds": runtime.refresh_seconds,
+            "default_dashboard": state.get("default_dashboard"),
+            "dashboards": dashboards,
         }
         return web.json_response(payload)
 
@@ -88,7 +109,8 @@ class EDashboardGenerateView(HomeAssistantView):
 
     async def post(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
-        metadata = await _generate_now(hass)
+        dashboard = request.query.get("dashboard")
+        metadata = await _generate_now(hass, dashboard)
         return web.json_response(metadata)
 
 
@@ -176,6 +198,23 @@ class EDashboardLatestBinView(HomeAssistantView):
         )
 
 
+class EDashboardNamedDitheredView(HomeAssistantView):
+    url = "/api/edashboard/{dashboard}"
+    name = "api:edashboard:named_dithered"
+    requires_auth = False
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = request.app["hass"]
+        dashboard = request.match_info.get("dashboard", "")
+        runtime = _runtime(hass, dashboard)
+        return await _latest_file_bytes_response(
+            runtime,
+            runtime.service.dithered_path,
+            "No dithered PNG generated yet",
+            "image/png",
+        )
+
+
 async def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(EDashboardHealthView())
     hass.http.register_view(EDashboardGenerateView())
@@ -184,3 +223,4 @@ async def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(EDashboardLatestDitheredView())
     hass.http.register_view(EDashboardLatestEpdView())
     hass.http.register_view(EDashboardLatestBinView())
+    hass.http.register_view(EDashboardNamedDitheredView())

@@ -1,1 +1,0 @@
-Perfect, now let's make that this project can be run on home assistant, as a custom component that generates the images and the file that the reTerminal, flashed with esphome, can load.

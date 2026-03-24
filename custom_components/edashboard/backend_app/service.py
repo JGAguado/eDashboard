@@ -46,7 +46,7 @@ class DashboardService:
             weather = fetch_weather(self.config.latitude, self.config.longitude)
             aqi = fetch_aqi(self.config.latitude, self.config.longitude)
 
-            rgb = render_dashboard(self.config, weather, aqi)
+            rgb = render_dashboard(self.config, weather, aqi, location_name=self.location_name)
             rgb.save(self.rgb_path, format="PNG", optimize=True)
 
             indexed = dither_to_epd7(rgb)
@@ -61,7 +61,7 @@ class DashboardService:
                 "binary_format": "EDB7-v1",
                 "payload_bytes": payload_bytes,
                 "binary_sha256": sha256(self.binary_path.read_bytes()).hexdigest(),
-                "calendar_event": next_event,
+                "calendar_event": None,
                 "config": {
                     "location": self.location_name,
                     "latitude": self.config.latitude,

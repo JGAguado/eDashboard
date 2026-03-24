@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 import asyncio
 import logging
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -30,18 +31,21 @@ from .backend_app.service import DashboardService
 
 _LOGGER = logging.getLogger(__name__)
 
+_DASHBOARD_OPTION_KEYS = {
+    CONF_OUTPUT_DIR,
+    CONF_LATITUDE,
+    CONF_LONGITUDE,
+    CONF_LOCATION,
+    CONF_TEMP_UNIT,
+    CONF_WIND_UNIT,
+    CONF_REFRESH_SECONDS,
+}
+
 CONFIG_SCHEMA = vol.Schema(
     {
-        DOMAIN: vol.Schema(
-            {
-                vol.Optional(CONF_OUTPUT_DIR): cv.string,
-                vol.Optional(CONF_LATITUDE): vol.Coerce(float),
-                vol.Optional(CONF_LONGITUDE): vol.Coerce(float),
-                vol.Optional(CONF_LOCATION): cv.string,
-                vol.Optional(CONF_TEMP_UNIT): vol.In(["C", "F"]),
-                vol.Optional(CONF_WIND_UNIT): vol.In(["km/h", "mph", "m/s", "knots"]),
-                vol.Optional(CONF_REFRESH_SECONDS): vol.All(vol.Coerce(int), vol.Range(min=15)),
-            }
+        vol.Optional(DOMAIN): vol.Any(
+            dict,
+            [dict],
         )
     },
     extra=vol.ALLOW_EXTRA,
@@ -58,9 +62,96 @@ class DashboardRuntime:
     last_error: str | None = None
     last_success: str | None = None
 
+
+def _sanitize_dashboard_name(raw_name: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_name.strip()).strip("_").lower()
+    return cleaned or fallback
+
+
+def _normalize_entries(raw_cfg: Any) -> list[tuple[str, dict[str, Any]]]:
+    if raw_cfg is None:
+        return [("default", {})]
+
+    if isinstance(raw_cfg, list):
+        entries: list[tuple[str, dict[str, Any]]] = []
+        used_names: set[str] = set()
+        for index, item in enumerate(raw_cfg, start=1):
+            if not isinstance(item, dict):
+                raise ValueError("Each edashboard list item must be a mapping")
+
+            explicit_name: str | None = None
+            explicit_cfg: dict[str, Any] | None = None
+            item_keys = list(item.keys())
+
+            if len(item_keys) == 1:
+                only_key = str(item_keys[0])
+                only_val = item[item_keys[0]]
+                if isinstance(only_val, dict):
+                    explicit_name = only_key
+                    explicit_cfg = dict(only_val)
+
+            if explicit_cfg is None:
+                name_candidates = [str(k) for k in item.keys() if str(k) not in _DASHBOARD_OPTION_KEYS]
+                if name_candidates:
+                    explicit_name = name_candidates[0]
+                explicit_cfg = dict(item)
+                if explicit_name is not None:
+                    explicit_cfg.pop(explicit_name, None)
+
+            base_name = explicit_name or f"dashboard_{index}"
+            name = _sanitize_dashboard_name(base_name, f"dashboard_{index}")
+            if name in used_names:
+                suffix = 2
+                unique_name = f"{name}_{suffix}"
+                while unique_name in used_names:
+                    suffix += 1
+                    unique_name = f"{name}_{suffix}"
+                name = unique_name
+
+            used_names.add(name)
+            entries.append((name, explicit_cfg))
+
+        return entries
+
+    if isinstance(raw_cfg, dict):
+        if any(k in raw_cfg for k in _DASHBOARD_OPTION_KEYS):
+            return [("default", dict(raw_cfg))]
+
+        entries = []
+        for index, (name_raw, cfg_raw) in enumerate(raw_cfg.items(), start=1):
+            if not isinstance(cfg_raw, dict):
+                raise ValueError(f"Dashboard '{name_raw}' must map to a dictionary")
+            name = _sanitize_dashboard_name(str(name_raw), f"dashboard_{index}")
+            entries.append((name, dict(cfg_raw)))
+        return entries or [("default", {})]
+
+    raise ValueError("edashboard configuration must be a mapping or a list of mappings")
+
+
+async def _resolve_location(hass: HomeAssistant, cfg: dict[str, Any]) -> tuple[float, float, str, str]:
+    location = str(cfg.get(CONF_LOCATION, "")).strip()
+    if location:
+        geo = await hass.async_add_executor_job(geocode_location, location)
+        lat = float(geo["latitude"])
+        lon = float(geo["longitude"])
+        timezone = str(geo["timezone"])
+        location_name = str(geo.get("name") or location)
+        country = str(geo.get("country") or "").strip()
+        if country:
+            location_name = f"{location_name}, {country}"
+        return lat, lon, timezone, location_name
+
+    lat = float(cfg.get(CONF_LATITUDE, hass.config.latitude))
+    lon = float(cfg.get(CONF_LONGITUDE, hass.config.longitude))
+    timezone = str(hass.config.time_zone or "UTC")
+    location_name = str(hass.config.location_name or "Home").strip() or "Home"
+    return lat, lon, timezone, location_name
+
 def _build_runtime_config(
     hass: HomeAssistant,
     cfg: dict[str, Any],
+    dashboard_name: str,
+    multi_mode: bool,
     lat: float,
     lon: float,
     timezone: str,
@@ -77,7 +168,12 @@ def _build_runtime_config(
 
     refresh_seconds = int(cfg.get(CONF_REFRESH_SECONDS, DEFAULT_REFRESH_SECONDS))
 
-    output_dir = Path(cfg.get(CONF_OUTPUT_DIR, hass.config.path("www", "edashboard", "output"))).expanduser().resolve()
+    if CONF_OUTPUT_DIR in cfg:
+        output_dir = Path(str(cfg[CONF_OUTPUT_DIR])).expanduser().resolve()
+    else:
+        base_output = Path(hass.config.path("www", "edashboard", "output")).expanduser().resolve()
+        output_dir = base_output / dashboard_name if multi_mode else base_output
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     app_cfg = AppConfig(
@@ -121,66 +217,85 @@ async def _generate_once(hass: HomeAssistant, runtime: DashboardRuntime, reason:
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    cfg = config.get(DOMAIN, {})
+    raw_cfg = config.get(DOMAIN, {})
 
     try:
-        location = str(cfg.get(CONF_LOCATION, "")).strip()
-        if location:
-            geo = await hass.async_add_executor_job(geocode_location, location)
-            lat = float(geo["latitude"])
-            lon = float(geo["longitude"])
-            timezone = str(geo["timezone"])
-            location_name = str(geo.get("name") or location)
-            country = str(geo.get("country") or "").strip()
-            if country:
-                location_name = f"{location_name}, {country}"
-        else:
-            lat = float(cfg.get(CONF_LATITUDE, hass.config.latitude))
-            lon = float(cfg.get(CONF_LONGITUDE, hass.config.longitude))
-            timezone = str(hass.config.time_zone or "UTC")
-            location_name = str(hass.config.location_name or "Home").strip() or "Home"
+        entries = _normalize_entries(raw_cfg)
+        multi_mode = len(entries) > 1
 
-        runtime = _build_runtime_config(hass, cfg, lat, lon, timezone, location_name)
+        runtimes: dict[str, DashboardRuntime] = {}
+        for dashboard_name, cfg in entries:
+            lat, lon, timezone, location_name = await _resolve_location(hass, cfg)
+            runtime = _build_runtime_config(
+                hass,
+                cfg,
+                dashboard_name,
+                multi_mode,
+                lat,
+                lon,
+                timezone,
+                location_name,
+            )
+            runtime.generate_lock = asyncio.Lock()
+            runtimes[dashboard_name] = runtime
     except Exception as exc:  # noqa: BLE001
         _LOGGER.error("Failed to initialize eDashboard integration: %s", exc)
         return False
 
-    runtime.generate_lock = asyncio.Lock()
-
-    hass.data[DOMAIN] = runtime
+    default_dashboard = next(iter(runtimes.keys()))
+    hass.data[DOMAIN] = {
+        "runtimes": runtimes,
+        "default_dashboard": default_dashboard,
+    }
 
     await async_register_views(hass)
 
     async def _handle_generate(call: ServiceCall) -> None:
-        await _generate_once(hass, runtime, "service")
+        target = str(call.data.get("dashboard", "")).strip().lower()
+        if target:
+            runtime = runtimes.get(target)
+            if runtime is None:
+                _LOGGER.warning("Unknown dashboard '%s' requested in generate_now service", target)
+                return
+            await _generate_once(hass, runtime, f"service:{target}")
+            return
+
+        for name, runtime in runtimes.items():
+            await _generate_once(hass, runtime, f"service:{name}")
 
     if not hass.services.has_service(DOMAIN, "generate_now"):
         hass.services.async_register(DOMAIN, "generate_now", _handle_generate)
 
-    await _generate_once(hass, runtime, "startup")
+    for name, runtime in runtimes.items():
+        await _generate_once(hass, runtime, f"startup:{name}")
 
-    async def _scheduled(_now) -> None:
-        await _generate_once(hass, runtime, "scheduled")
+        async def _scheduled(_now, dashboard_name: str = name, rt: DashboardRuntime = runtime) -> None:
+            await _generate_once(hass, rt, f"scheduled:{dashboard_name}")
 
-    runtime.unsub_interval = async_track_time_interval(
-        hass,
-        _scheduled,
-        timedelta(seconds=runtime.refresh_seconds),
-    )
+        runtime.unsub_interval = async_track_time_interval(
+            hass,
+            _scheduled,
+            timedelta(seconds=runtime.refresh_seconds),
+        )
 
     async def _on_stop(_event) -> None:
-        if runtime.unsub_interval:
-            runtime.unsub_interval()
+        for runtime in runtimes.values():
+            if runtime.unsub_interval:
+                runtime.unsub_interval()
         if hass.services.has_service(DOMAIN, "generate_now"):
             hass.services.async_remove(DOMAIN, "generate_now")
-        await hass.async_add_executor_job(runtime.service.stop)
+        for runtime in runtimes.values():
+            await hass.async_add_executor_job(runtime.service.stop)
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
 
-    _LOGGER.info(
-        "eDashboard initialized. output_dir=%s refresh=%ss",
-        runtime.output_dir,
-        runtime.refresh_seconds,
-    )
+    _LOGGER.info("eDashboard initialized with %s dashboard(s)", len(runtimes))
+    for name, runtime in runtimes.items():
+        _LOGGER.info(
+            "eDashboard dashboard '%s': output_dir=%s refresh=%ss",
+            name,
+            runtime.output_dir,
+            runtime.refresh_seconds,
+        )
 
     return True
