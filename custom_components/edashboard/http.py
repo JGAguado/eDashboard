@@ -319,7 +319,51 @@ class EDashboardLegacyNamedDitheredView(EDashboardNamedDitheredView):
     name = "api:edashboard:legacy_location_dithered"
 
 
+class EDashboardLatestLocationDitheredView(HomeAssistantView):
+    url = "/api/dashboard/latest/png"
+    name = "api:edashboard:latest_location_dithered"
+    requires_auth = False
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = _request_hass(request)
+        base_output = Path(hass.config.path("www", "edashboard", "output")).resolve()
+
+        selector = (request.query.get("location") or request.query.get("dashboard") or "").strip()
+        names = _iter_location_candidates(selector) if selector else []
+        path_candidates = _discover_generated_paths(base_output, names)
+
+        # Default runtime fallback (single-dashboard or default configured dashboard).
+        try:
+            runtime = _runtime(hass)
+            runtime_path = Path(runtime.service.dithered_path)
+            if runtime_path not in path_candidates:
+                path_candidates.append(runtime_path)
+        except web.HTTPException:
+            pass
+
+        for candidate in path_candidates:
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                body = candidate.read_bytes()
+            except OSError:
+                _LOGGER.exception("Failed reading dashboard output file: %s", candidate)
+                continue
+            return web.Response(body=body, content_type="image/png", headers=_NO_CACHE_HEADERS)
+
+        if selector:
+            raise web.HTTPNotFound(text=f"No generated dithered image found for selector: {selector}")
+        raise web.HTTPNotFound(text="No generated dithered image found")
+
+
+class EDashboardLatestLegacyDitheredView(EDashboardLatestLocationDitheredView):
+    url = "/api/edashboard/latest/dithered.png"
+    name = "api:edashboard:legacy_latest_location_dithered"
+
+
 async def async_register_views(hass: HomeAssistant) -> None:
-    # Expose only location-based dashboard images, e.g. /api/dashboard/vienna.
+    # Expose location-based and stable latest-style dashboard image endpoints.
     hass.http.register_view(EDashboardNamedDitheredView())
     hass.http.register_view(EDashboardLegacyNamedDitheredView())
+    hass.http.register_view(EDashboardLatestLocationDitheredView())
+    hass.http.register_view(EDashboardLatestLegacyDitheredView())
