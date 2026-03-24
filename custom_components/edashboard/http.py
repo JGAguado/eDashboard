@@ -219,22 +219,22 @@ class EDashboardLatestBinView(HomeAssistantView):
 
 
 class EDashboardNamedDitheredView(HomeAssistantView):
-    url = "/api/edashboard/{dashboard}"
-    name = "api:edashboard:named_dithered"
+    url = "/api/dashboard/{location}"
+    name = "api:edashboard:location_dithered"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
         try:
             hass = _request_hass(request)
-            dashboard_raw = request.match_info.get("dashboard", "")
-            if not dashboard_raw.strip():
-                raise web.HTTPNotFound(text="Dashboard name is required")
+            location_raw = request.match_info.get("location", "")
+            if not location_raw.strip():
+                raise web.HTTPNotFound(text="Location is required")
 
             base_output = Path(hass.config.path("www", "edashboard", "output")).resolve()
             names = [
-                dashboard_raw.strip(),
-                dashboard_raw.strip().lower(),
-                _sanitize_dashboard_name(dashboard_raw),
+                location_raw.strip(),
+                location_raw.strip().lower(),
+                _sanitize_dashboard_name(location_raw),
             ]
 
             unique_names: list[str] = []
@@ -245,8 +245,9 @@ class EDashboardNamedDitheredView(HomeAssistantView):
 
             path_candidates: list[Path] = []
             for name in unique_names:
-                # Multi-dashboard output layout.
+                # Multi-dashboard output layouts.
                 path_candidates.append(base_output / name / "latest_epd.png")
+                path_candidates.append(base_output / f"weather_{name}" / "latest_epd.png")
 
             # Single-dashboard fallback layout.
             path_candidates.append(base_output / "latest_epd.png")
@@ -270,14 +271,14 @@ class EDashboardNamedDitheredView(HomeAssistantView):
                     continue
                 return web.Response(body=body, content_type="image/png", headers=_NO_CACHE_HEADERS)
 
-            raise web.HTTPNotFound(text=f"No generated dithered image found for dashboard: {dashboard_raw}")
+            raise web.HTTPNotFound(text=f"No generated dithered image found for location: {location_raw}")
         except web.HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.exception("Unexpected error serving dashboard '%s'", dashboard_raw)
+            _LOGGER.exception("Unexpected error serving location '%s'", location_raw)
             raise web.HTTPNotFound(text=f"Dashboard API read error: {exc}") from exc
 
 
 async def async_register_views(hass: HomeAssistant) -> None:
-    # Expose only named dashboard images, e.g. /api/edashboard/weather_vienna.
+    # Expose only location-based dashboard images, e.g. /api/dashboard/vienna.
     hass.http.register_view(EDashboardNamedDitheredView())
