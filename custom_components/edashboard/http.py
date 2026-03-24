@@ -20,6 +20,15 @@ def _sanitize_dashboard_name(raw_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", raw_name.strip()).strip("_").lower()
 
 
+def _request_hass(request: web.Request) -> HomeAssistant:
+    hass = request.app.get("hass")
+    if hass is None:
+        hass = request.config_dict.get("hass")
+    if hass is None:
+        raise web.HTTPServiceUnavailable(text="Home Assistant context is not available in this request")
+    return hass
+
+
 def _state(hass: HomeAssistant) -> dict[str, Any]:
     state = hass.data.get(DOMAIN)
     if not isinstance(state, dict):
@@ -215,12 +224,12 @@ class EDashboardNamedDitheredView(HomeAssistantView):
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
-        hass = request.app["hass"]
-        dashboard_raw = request.match_info.get("dashboard", "")
-        if not dashboard_raw.strip():
-            raise web.HTTPNotFound(text="Dashboard name is required")
-
         try:
+            hass = _request_hass(request)
+            dashboard_raw = request.match_info.get("dashboard", "")
+            if not dashboard_raw.strip():
+                raise web.HTTPNotFound(text="Dashboard name is required")
+
             base_output = Path(hass.config.path("www", "edashboard", "output")).resolve()
             names = [
                 dashboard_raw.strip(),
@@ -266,7 +275,7 @@ class EDashboardNamedDitheredView(HomeAssistantView):
             raise
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Unexpected error serving dashboard '%s'", dashboard_raw)
-            raise web.HTTPInternalServerError(text=f"Unexpected dashboard API error: {exc}") from exc
+            raise web.HTTPNotFound(text=f"Dashboard API read error: {exc}") from exc
 
 
 async def async_register_views(hass: HomeAssistant) -> None:
