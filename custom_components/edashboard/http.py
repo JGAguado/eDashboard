@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 import json
 import logging
+import re
 
 from aiohttp import web
 
@@ -13,6 +14,10 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _sanitize_dashboard_name(raw_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", raw_name.strip()).strip("_").lower()
 
 
 def _state(hass: HomeAssistant) -> dict[str, Any]:
@@ -211,7 +216,20 @@ class EDashboardNamedDitheredView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
-        dashboard = request.match_info.get("dashboard", "")
+        dashboard_raw = request.match_info.get("dashboard", "")
+        dashboard = _sanitize_dashboard_name(dashboard_raw)
+
+        # Primary path: serve from HA www output path directly.
+        # This avoids runtime-state mismatches if images are already generated.
+        direct_path = Path(hass.config.path("www", "edashboard", "output", dashboard, "latest_epd.png")).resolve()
+        if direct_path.exists() and direct_path.is_file():
+            try:
+                body = direct_path.read_bytes()
+                return web.Response(body=body, content_type="image/png", headers=_NO_CACHE_HEADERS)
+            except OSError as exc:
+                _LOGGER.exception("Failed reading direct dashboard output file: %s", direct_path)
+                raise web.HTTPInternalServerError(text=f"Unable to read generated file: {exc}") from exc
+
         runtime = _runtime(hass, dashboard)
         try:
             return await _latest_file_bytes_response(
