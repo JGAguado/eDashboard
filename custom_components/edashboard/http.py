@@ -53,6 +53,8 @@ async def _generate_now(hass: HomeAssistant, dashboard: str | None = None) -> di
 def _ensure_file(path: Path, message: str) -> None:
     if not path.exists():
         raise web.HTTPNotFound(text=message)
+    if not path.is_file():
+        raise web.HTTPNotFound(text=message)
 
 
 _NO_CACHE_HEADERS = {
@@ -72,7 +74,11 @@ async def _latest_file_bytes_response(
     # mixed versions when a file is requested while a refresh is running.
     async with runtime.generate_lock:
         _ensure_file(path, not_found_message)
-        body = path.read_bytes()
+        try:
+            body = path.read_bytes()
+        except OSError as exc:
+            _LOGGER.exception("Failed reading dashboard output file: %s", path)
+            raise web.HTTPInternalServerError(text=f"Unable to read generated file: {exc}") from exc
     return web.Response(body=body, content_type=content_type, headers=_NO_CACHE_HEADERS)
 
 
@@ -207,20 +213,25 @@ class EDashboardNamedDitheredView(HomeAssistantView):
         hass = request.app["hass"]
         dashboard = request.match_info.get("dashboard", "")
         runtime = _runtime(hass, dashboard)
-        return await _latest_file_bytes_response(
-            runtime,
-            runtime.service.dithered_path,
-            "No dithered PNG generated yet",
-            "image/png",
-        )
+        try:
+            return await _latest_file_bytes_response(
+                runtime,
+                runtime.service.dithered_path,
+                "No dithered PNG generated yet",
+                "image/png",
+            )
+        except web.HTTPNotFound:
+            # If startup generation failed or the file was removed, regenerate
+            # once on-demand for this dashboard and retry.
+            await _generate_now(hass, dashboard)
+            return await _latest_file_bytes_response(
+                runtime,
+                runtime.service.dithered_path,
+                "No dithered PNG generated yet",
+                "image/png",
+            )
 
 
 async def async_register_views(hass: HomeAssistant) -> None:
-    hass.http.register_view(EDashboardHealthView())
-    hass.http.register_view(EDashboardGenerateView())
-    hass.http.register_view(EDashboardMetaView())
-    hass.http.register_view(EDashboardLatestPngView())
-    hass.http.register_view(EDashboardLatestDitheredView())
-    hass.http.register_view(EDashboardLatestEpdView())
-    hass.http.register_view(EDashboardLatestBinView())
+    # Expose only named dashboard images, e.g. /api/edashboard/weather_vienna.
     hass.http.register_view(EDashboardNamedDitheredView())
