@@ -217,37 +217,38 @@ class EDashboardNamedDitheredView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         dashboard_raw = request.match_info.get("dashboard", "")
-        dashboard = _sanitize_dashboard_name(dashboard_raw)
+        if not dashboard_raw.strip():
+            raise web.HTTPNotFound(text="Dashboard name is required")
 
-        # Primary path: serve from HA www output path directly.
-        # This avoids runtime-state mismatches if images are already generated.
-        direct_path = Path(hass.config.path("www", "edashboard", "output", dashboard, "latest_epd.png")).resolve()
-        if direct_path.exists() and direct_path.is_file():
+        base_output = Path(hass.config.path("www", "edashboard", "output")).resolve()
+        candidates = [
+            dashboard_raw.strip(),
+            dashboard_raw.strip().lower(),
+            _sanitize_dashboard_name(dashboard_raw),
+        ]
+
+        tried: list[str] = []
+        for candidate in candidates:
+            name = _sanitize_dashboard_name(candidate)
+            if not name or name in tried:
+                continue
+            tried.append(name)
+
+            direct_path = (base_output / name / "latest_epd.png").resolve()
+            if base_output not in direct_path.parents:
+                continue
+            if not direct_path.exists() or not direct_path.is_file():
+                continue
+
             try:
                 body = direct_path.read_bytes()
-                return web.Response(body=body, content_type="image/png", headers=_NO_CACHE_HEADERS)
             except OSError as exc:
                 _LOGGER.exception("Failed reading direct dashboard output file: %s", direct_path)
                 raise web.HTTPInternalServerError(text=f"Unable to read generated file: {exc}") from exc
 
-        runtime = _runtime(hass, dashboard)
-        try:
-            return await _latest_file_bytes_response(
-                runtime,
-                runtime.service.dithered_path,
-                "No dithered PNG generated yet",
-                "image/png",
-            )
-        except web.HTTPNotFound:
-            # If startup generation failed or the file was removed, regenerate
-            # once on-demand for this dashboard and retry.
-            await _generate_now(hass, dashboard)
-            return await _latest_file_bytes_response(
-                runtime,
-                runtime.service.dithered_path,
-                "No dithered PNG generated yet",
-                "image/png",
-            )
+            return web.Response(body=body, content_type="image/png", headers=_NO_CACHE_HEADERS)
+
+        raise web.HTTPNotFound(text=f"No generated dithered image found for dashboard: {dashboard_raw}")
 
 
 async def async_register_views(hass: HomeAssistant) -> None:
