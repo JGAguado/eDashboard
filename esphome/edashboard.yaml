@@ -3,7 +3,7 @@ substitutions:
   friendly_name: eDashboard
   # Home Assistant endpoint exposed by this repo's custom component:
   # /api/edashboard/latest/dithered.png (alias: /api/edashboard/latest/epd.png)
-  image_url: "http://homeassistant.local:8123/api/edashboard/latest/dithered.png"
+  image_url: "http://homeassistant.local:8123/api/edashboard/latest?dashboard=vienna"
 
 esphome:
   name: ${device_name}
@@ -41,8 +41,8 @@ wifi:
   power_save_mode: none
   on_connect:
     then:
-      - logger.log: "WiFi connected, requesting dashboard image"
-      - component.update: dashboard_image
+      - logger.log: "WiFi connected"
+      - script.execute: request_dashboard_if_allowed
   ap:
     ssid: "${friendly_name} Fallback"
     password: "ChangeMe1234"
@@ -58,6 +58,40 @@ deep_sleep:
   id: deep_sleep_ctrl
   run_duration: 2min
   sleep_duration: 1h
+  wakeup_pin:
+    number: GPIO4
+    allow_other_uses: true
+    mode:
+      input: true
+      pullup: true
+  wakeup_pin_mode: INVERT_WAKEUP
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+script:
+  - id: request_dashboard_if_allowed
+    then:
+      - if:
+          condition:
+            lambda: |-
+              auto now = id(ha_time).now();
+              if (!now.is_valid()) {
+                return true;
+              }
+              return now.hour < 0 || now.hour >= 7;
+          then:
+            - logger.log: "Allowed update window, requesting dashboard image"
+            - component.update: dashboard_image
+          else:
+            - logger.log: "Quiet hours (00:00-06:59), skipping update"
+            - deep_sleep.enter: deep_sleep_ctrl
+
+  - id: request_dashboard_force
+    then:
+      - logger.log: "Manual refresh requested"
+      - component.update: dashboard_image
 
 font:
   - file: "../custom_components/edashboard/assets/fonts/Jost.ttf"
@@ -136,7 +170,7 @@ display:
       const int widget_w = 100;
       const int widget_h = 25;
       const int widget_x = it.get_width() - 10 - widget_w;
-      const int widget_y = 25 - widget_h;
+      const int widget_y = 40 - widget_h;
       const Color ui_gray(88, 88, 88);
 
       // Cover the backend-generated update-time text/icon with a white patch first.
@@ -180,7 +214,7 @@ button:
   - platform: template
     name: "Refresh Dashboard Now"
     on_press:
-      - component.update: dashboard_image
+      - script.execute: request_dashboard_if_allowed
 
 sensor:
   - platform: wifi_signal
@@ -231,12 +265,13 @@ binary_sensor:
     name: "Right Button"
     pin:
       number: GPIO4
+      allow_other_uses: true
       mode: INPUT_PULLUP
       inverted: true
     on_press:
       then:
         - logger.log: "Right button pressed"
-        - component.update: dashboard_image
+        - script.execute: request_dashboard_force
   - platform: gpio
     id: button_left
     name: "Left Button"
@@ -247,7 +282,7 @@ binary_sensor:
     on_press:
       then:
         - logger.log: "Left button pressed"
-        - component.update: dashboard_image
+        - script.execute: request_dashboard_if_allowed
   - platform: gpio
     id: button_center
     name: "Center Button"
@@ -258,7 +293,7 @@ binary_sensor:
     on_press:
       then:
         - logger.log: "Center button pressed"
-        - component.update: dashboard_image
+        - script.execute: request_dashboard_if_allowed
 
 output:
   - platform: gpio
